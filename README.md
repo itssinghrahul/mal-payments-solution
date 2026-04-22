@@ -1,119 +1,74 @@
-# Payments — Unified Payment Data Model
+# 💳 Payments — Unified Payment Data Platform
 
-A Python-based data pipeline that ingests inconsistent payment events from three product squads (Cards, Transfers, Bill Payments), normalises them into a canonical schema, and produces a unified dataset for downstream analytics and reporting.
-
----
-
-## Problem
-
-Three independent squads built separate pipelines with incompatible schemas:
-
-| Squad         | Source Format                            | Key Inconsistencies                            |
-| ------------- | ---------------------------------------- | ---------------------------------------------- |
-| Cards         | `txn_id`, `ccy`, `cust_id`               | Split date/time fields, no fee concept         |
-| Transfers     | `transfer_ref`, `initiated_at` (ISO8601) | Fee as separate field, IBAN-based accounts     |
-| Bill Payments | `bill_pay_id`, `payment_result`          | Different status vocab (`SUCCESS`, `APPROVED`) |
-
-This fragmentation makes it difficult to:
-
-* Run consistent analytics across payment types
-* Maintain data quality
-* Evolve schemas without breaking downstream consumers
+A Python-based data platform that ingests inconsistent payment events from three product squads (Cards, Transfers, Bill Payments), normalises them into a canonical schema, and provides a unified dataset for analytics, data quality monitoring, and reporting.
 
 ---
 
-## Architecture
+# 🚨 Problem Statement
 
-```
-cards.csv  ──┐
-             ├──▶ transform ──▶ validate ──▶ unified output (JSON / CSV)
-transfers.csv─┤
-             │
-bill_payments─┘
-```
+Three independent squads built separate payment pipelines with incompatible schemas:
 
-Each source has a dedicated transformer that maps raw fields into a shared canonical model.
+| Squad         | Source Format                            | Key Issues |
+|---------------|------------------------------------------|------------|
+| Cards         | txn_id, ccy, cust_id                    | Split timestamps, no fee model |
+| Transfers     | transfer_ref, initiated_at (ISO8601)    | Fee separated, IBAN-based accounts |
+| Bill Payments | bill_pay_id, payment_result            | Inconsistent status vocabulary |
 
----
-
-## Canonical Schema (v2.0)
-
-| Field               | Type     | Description                                                  |
-| ------------------- | -------- | ------------------------------------------------------------ |
-| `event_id`          | string   | Deterministic SHA-256 hash (source + reference + timestamp)  |
-| `schema_version`    | string   | `1.0` or `2.0`                                               |
-| `payment_type`      | enum     | `CARD` / `TRANSFER` / `BILL`                                 |
-| `customer_id`       | string   | Normalised customer identifier                               |
-| `amount`            | float    | Payment amount (2 decimal precision)                         |
-| `currency`          | string   | ISO-4217 (e.g. `AED`, `USD`)                                 |
-| `status`            | enum     | `APPROVED` / `DECLINED` / `PENDING` / `FAILED` / `COMPLETED` |
-| `event_timestamp`   | datetime | ISO-8601 UTC                                                 |
-| `payment_method`    | string   | `VISA`, `MASTERCARD`, `BANK_TRANSFER`, `MOBILE_APP`, etc.    |
-| `source_system`     | string   | `cards` / `transfers` / `bill_payments`                      |
-| `raw_reference`     | string   | Original ID from source system                               |
-| `metadata`          | dict     | Source-specific attributes (merchant, biller, account info)  |
-| `fee_amount`        | float    | Transaction fee (v2 only, default `0.0`)                     |
-| `fee_currency`      | string   | Fee currency (v2 only)                                       |
-| `counterparty_name` | string   | Merchant / recipient / biller name (v2 only)                 |
-
-### Example Output
-
-```json
-{
-  "event_id": "f3a1c9...",
-  "payment_type": "CARD",
-  "amount": 100.0,
-  "currency": "AED",
-  "status": "COMPLETED",
-  "source_system": "cards"
-}
-```
+### Impact
+- No unified analytics across payment types
+- Broken cross-product reporting
+- Hard to enforce data quality
+- Difficult schema evolution
 
 ---
 
-## Design Decisions
+# 🧠 Solution Overview
 
-### Canonical Schema
+We introduce a **canonical payment event model + ETL + data quality layer + dashboard**.
 
-A unified schema standardizes events across heterogeneous systems, enabling consistent analytics and simplifying downstream consumption.
 
-### Deterministic Event ID
+Raw Squad CSVs
+│
+▼
+Python ETL Pipeline
+(transform + validate)
+│
+▼
+Canonical PaymentEventV2 Schema
+│
+├──────────────┐
+▼ ▼
+Analytics Layer Data Quality Dashboard (Streamlit)
+(SQL-ready) (Observability)
 
-`event_id` is generated using SHA-256 over key fields to:
-
-* Ensure idempotency
-* Prevent duplicate ingestion
-* Support replayable pipelines
-
-### Metadata for Flexibility
-
-Source-specific attributes are stored in `metadata` to:
-
-* Avoid frequent schema changes
-* Keep the core model stable
-* Allow flexible downstream use
-
-### Validation at Ingestion
-
-All records are validated before output:
-
-* Prevents propagation of bad data
-* Surfaces errors early
-* Ensures reliability of downstream datasets
-
-### Versioned Schema Evolution
-
-Schema changes are handled via versioning (`v1 → v2`) to:
-
-* Maintain backward compatibility
-* Enable gradual migration
-* Avoid breaking downstream systems
 
 ---
 
-## Schema Versioning (v1 → v2)
+# 📊 Canonical Schema (v2.0)
 
-V1 defines the core fields. V2 extends the schema with additional attributes without breaking compatibility.
+| Field | Type | Description |
+|------|------|-------------|
+| event_id | string | SHA-256 deterministic ID |
+| schema_version | string | v1 / v2 |
+| payment_type | enum | CARD / TRANSFER / BILL |
+| customer_id | string | Unified customer identifier |
+| amount | float | Transaction amount |
+| currency | string | ISO-4217 |
+| status | enum | APPROVED / DECLINED / PENDING / FAILED / COMPLETED |
+| event_timestamp | datetime | UTC timestamp |
+| payment_method | string | Channel or rail |
+| source_system | string | cards / transfers / bill_payments |
+| raw_reference | string | Original ID |
+| metadata | dict | Source-specific fields |
+| fee_amount | float | Transaction fee (v2+) |
+| fee_currency | string | Fee currency |
+| counterparty_name | string | Merchant / recipient / biller |
+
+---
+
+# 🔁 Schema Evolution (v1 → v2)
+
+Backward-compatible migration approach:
 
 ```python
 from schema import migrate_v1_to_v2
@@ -122,131 +77,154 @@ v2_event = migrate_v1_to_v2(
     v1_event,
     fee_amount=2.50,
     fee_currency="AED",
-    counterparty_name="Ahmed Al Mansoori"
+    counterparty_name="Merchant X"
 )
-```
 
-Each event includes a `schema_version` field, allowing consumers to handle multiple versions safely.
+Each record carries schema_version for safe downstream handling.
 
----
+⚙️ Setup & Installation
+1. Clone repo
+git clone https://github.com/itssinghrahul/mal-payments-solution.git
+cd mal-payments-solution
+2. Create virtual environment
+python3 -m venv .venv
+source .venv/bin/activate
+3. Install dependencies
+python3 -m pip install -r requirements.txt
+🚀 Run the System
+1. Run ETL Pipeline
+python3 pipeline.py
+Output:
+data/output/payment_events.csv
+data/output/payment_events.json
+data/output/errors.json (if any)
+2. Run Data Quality Dashboard (Streamlit)
+python3 -m streamlit run app.py
 
-## Project Structure
+Open:
 
-```
+http://localhost:8501
+Dashboard includes:
+Schema compliance rate
+Data freshness per source
+Transaction trends
+Failure rates
+Null rate monitoring
+Volume anomaly detection
+📊 SQL Analytics Layer
+
+The unified dataset supports downstream SQL analytics:
+
+Key Queries:
+Daily volume & value by payment type
+Failed / declined payments (risk monitoring)
+Customer 360 analysis
+Fee revenue tracking
+Schema version adoption tracking
+Data freshness monitoring
+Null rate analysis
+
+Compatible with DuckDB / Snowflake / BigQuery / Trino.
+
+🧪 Validation & Data Quality
+
+Each record is validated before ingestion:
+
+Valid payment types enforced
+Standardised status mapping
+Non-negative amounts
+ISO-4217 currency validation
+Required customer_id enforcement
+
+Invalid records are isolated in:
+
+data/output/errors.json
+📊 Data Quality Dimensions
+
+This system tracks three core observability pillars:
+
+1. Schema Compliance
+
+Ensures ingestion correctness per source system
+
+2. Data Freshness
+
+Tracks pipeline latency per squad
+
+3. Anomaly Detection
+
+Detects:
+
+sudden drops in transaction volume
+spikes in null rates
+abnormal distribution shifts
+🧱 Design Decisions
+Canonical Schema
+
+Ensures consistency across heterogeneous systems
+
+Metadata Field
+
+Preserves flexibility without breaking core schema
+
+Deterministic Event ID
+
+Prevents duplication and ensures idempotency
+
+Batch Processing
+
+Simpler, reproducible ETL (streaming is future extension)
+
+📈 Trade-offs
+Area	Decision	Reason
+Processing	Batch	Simplicity & reproducibility
+Storage	CSV/JSON	Local demo clarity
+Compute	Pandas	Lightweight vs Spark
+Quality checks	Custom logic	Avoid external dependencies
+🚀 Production Scaling Path
+
+If scaled to production:
+
+Ingestion → Kafka / Kinesis
+Processing → Spark / Flink
+Storage → S3 (Parquet)
+Warehouse → Snowflake / BigQuery
+Orchestration → Airflow / Dagster
+Data Quality → Great Expectations / Soda
+📁 Project Structure
 mal-payments-solution/
 ├── data/
 │   ├── raw/
-│   │   ├── cards.csv
-│   │   ├── transfers.csv
-│   │   └── bill_payments.csv
 │   └── output/
-│       ├── payment_events.json
-│       ├── payment_events.csv
-│       └── errors.json
 ├── schema.py
 ├── transformers.py
 ├── pipeline.py
+├── app.py
 ├── queries.sql
 └── requirements.txt
-```
+🧾 Requirements
 
----
+Core dependencies:
 
-## Setup & Run
+pandas
+pyarrow
+duckdb
+pydantic
+streamlit
+🧠 Key Highlights
+Multi-source ingestion (3 squads)
+Canonical schema design
+Schema versioning (v1 → v2)
+Data validation layer
+SQL analytics layer
+Data quality dashboard (Streamlit)
+Anomaly detection + freshness monitoring
+🎯 Outcome
 
-**Requirements:** Python 3.9+
+This project demonstrates:
 
-```bash
-git clone https://github.com/itssinghrahul/mal-payments-solution.git
-cd mal-payments-solution
-
-python3 -m venv .venv
-source .venv/bin/activate
-
-pip install -r requirements.txt
-python3 pipeline.py
-```
-
----
-
-## Output
-
-```
-==================================================
-Pipeline complete — 2024-01-17 06:32 UTC
-==================================================
-Total events : 22
-Total errors : 0
-CARD         : 8
-TRANSFER     : 6
-BILL         : 8
-==================================================
-```
-
-Outputs are written to `data/output/`.
-
----
-
-## SQL Queries
-
-`queries.sql` includes:
-
-1. Daily volume & value by payment type
-2. Failed / declined payments (ops monitoring)
-3. Customer 360 (total spend)
-4. Fee revenue by payment type
-5. Schema version distribution
-
-Compatible with DuckDB, Spark SQL, Trino, and other ANSI SQL engines.
-
----
-
-## Validation & Error Handling
-
-Each record is validated before emission:
-
-* `payment_type` must be valid
-* `status` must map to canonical values (e.g. `SUCCESS`, `APPROVED` → `COMPLETED`)
-* `amount` must be non-negative
-* `currency` must be ISO-4217 compliant
-* `customer_id` cannot be empty
-
-Invalid records are written to `data/output/errors.json` with detailed error context and excluded from final output.
-
----
-
-## Trade-offs
-
-* **Batch vs Streaming**
-  Batch processing chosen for simplicity; streaming (Kafka + Flink/Spark) would be used in production.
-
-* **JSON/CSV vs Parquet**
-  Human-readable formats used here; columnar storage preferred for large-scale analytics.
-
-* **Pandas vs Distributed Processing**
-  Pandas is sufficient for small datasets; Spark/Flink would handle scale.
-
----
-
-## Scaling Considerations
-
-For production deployment:
-
-* **Ingestion**: Kafka / Kinesis
-* **Processing**: Spark Structured Streaming / Flink
-* **Storage**: Partitioned Parquet in a data lake (S3/GCS)
-* **Warehouse**: Snowflake / BigQuery
-* **Orchestration**: Airflow / Dagster
-* **Data Quality**: Great Expectations
-
----
-
-## Dependencies
-
-| Package | Purpose                                   |
-| ------- | ----------------------------------------- |
-| pandas  | CSV ingestion and transformation          |
-| pyarrow | Optional Parquet output                   |
-| duckdb  | Optional query engine for local analytics |
-
-Core pipeline relies only on `pandas` and Python standard libraries.
+End-to-end ETL pipeline design
+Data modeling & normalization
+Data quality & observability
+Analytics enablement layer
+Production thinking (scalability & trade-offs)
