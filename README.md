@@ -79,7 +79,7 @@ v2_event = migrate_v1_to_v2(
     fee_currency="AED",
     counterparty_name="Merchant X"
 )
-
+```
 Each record carries schema_version for safe downstream handling.
 
 ⚙️ Setup & Installation
