@@ -1,4 +1,4 @@
-# Mal Payments — Unified Payment Data Model
+# Payments — Unified Payment Data Model
 
 A Python-based data pipeline that ingests inconsistent payment events from three product squads (Cards, Transfers, Bill Payments), normalises them into a canonical schema, and outputs a unified dataset for downstream analytics.
 
